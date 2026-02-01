@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Task Scheduling</title>
+  <link rel="stylesheet" href="styles.css">
+ </head>
+<body>
+  <main class="container">
+    <div class="section-header">
+      <h1>Task Scheduling</h1>
+      <a href="index.html" class="btn">Home</a>
+    </div>
+
+    <div id="offline-banner" style="display:none;background:#fff4e5;color:#7a4a00;padding:8px;border-radius:6px;border:1px solid rgba(122,74,0,0.06);text-align:center;margin:8px 0">You are offline — using local data and queued sync.</div>
+
+    <div class="panel">
+      <form id="task-form">
+        <div class="form-row">
+          <input id="task-title" placeholder="Task title" required>
+          <select id="task-assignee"><option value="">Assign to (loading...)</option></select>
+        </div>
+        <div class="form-row">
+          <input id="task-due" type="date">
+          <button class="btn" type="submit">Create Task</button>
+        </div>
+      </form>
+
+      <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
+        <button id="sync-tasks" class="btn">Sync local</button>
+        <span id="sync-tasks-status" class="item-meta"></span>
+      </div>
+
+      <div id="task-list" class="list"></div>
+    </div>
+  </main>
+
+  <script src="db.js"></script>
+  <script>
+    async function loadEmployees(){
+      const sel = document.getElementById('task-assignee'); sel.innerHTML = '<option value="">Unassigned</option>';
+      let arr = [];
+      try { const r = await fetch('/api/employees'); if (r.ok) arr = await r.json(); else throw new Error('network'); }
+      catch (e) { arr = (await window.awmsDB.getEmployees()).map(x=>({ _localId: x.id, name: x.name })); }
+      arr.forEach(e=>{ const o=document.createElement('option'); o.value=e._id || e._localId; o.textContent=e.name; sel.appendChild(o); });
+    }
+
+    async function loadTasks(){
+      let list = [];
+      try { const r = await fetch('/api/tasks'); if (r.ok) list = await r.json(); else throw new Error('network'); }
+      catch (e) { list = (await window.awmsDB.getTasks()).map(t=>({ _localId: t.id, title: t.title, due: t.due, assignee: t.assignee })); }
+
+      const em = (await (async ()=>{ try { const r = await fetch('/api/employees'); if(!r.ok) throw new Error('network'); return await r.json(); } catch(e){ return (await window.awmsDB.getEmployees()).map(x=>({ _localId:x.id, name:x.name })); } })());
+      const map = {}; em.forEach(e=>{ map[e._id || e._localId] = e.name; });
+
+      const el = document.getElementById('task-list'); el.innerHTML='';
+      list.forEach(t=>{
+        const div=document.createElement('div'); div.className='list-item';
+        const assigneeName = t.assignee ? (map[t.assignee]||t.assignee) : 'Unassigned';
+        const delBtn = `<button data-id="${t._id || t._localId}" data-local="${t._localId? '1':''}" class="danger">Delete</button>`;
+        div.innerHTML=`<div><strong>${t.title}</strong><div class="item-meta">Due: ${t.due||'n/a'} • Assignee: ${assigneeName}</div></div><div>${delBtn}</div>`;
+        el.appendChild(div);
+      });
+      el.querySelectorAll('button.danger').forEach(b=>b.addEventListener('click',async ev=>{ const id=ev.target.dataset.id; const isLocal = ev.target.dataset.local==='1'; if(isLocal){ await window.awmsDB.deleteTask(parseInt(id,10)); loadTasks(); return; } try{ await fetch('/api/tasks/'+id,{method:'DELETE'}); loadTasks(); } catch(e){ alert('Delete failed (server unavailable)'); } }));
+    }
+
+    document.getElementById('task-form').addEventListener('submit', async (e)=>{
+      e.preventDefault(); const title=document.getElementById('task-title').value.trim(); const assignee=document.getElementById('task-assignee').value; const due=document.getElementById('task-due').value;
+      if(!title) return;
+      let posted=false;
+      try{ const r = await fetch('/api/tasks',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({title,assignee,due})}); if(r.ok) posted=true; }
+      catch(err){ posted=false; }
+      if(!posted){ await window.awmsDB.addTask({ title, assignee, due, _local:true, createdAt: Date.now() }); document.getElementById('sync-tasks-status').textContent='Saved locally'; }
+      document.getElementById('task-title').value=''; document.getElementById('task-due').value=''; loadTasks();
+    });
+
+    document.getElementById('sync-tasks').addEventListener('click', async ()=>{
+      const status = document.getElementById('sync-tasks-status'); status.textContent='Syncing...';
+      const local = await window.awmsDB.getTasks();
+      for(const t of local){ try { const r = await fetch('/api/tasks',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({title:t.title,assignee:t.assignee,due:t.due})}); if(r.ok) await window.awmsDB.deleteTask(t.id); } catch(e){} }
+      status.textContent='Sync complete'; setTimeout(()=>status.textContent='',2000); loadTasks();
+    });
+
+    loadEmployees(); loadTasks();
+
+    // offline banner handling
+    const obanner = document.getElementById('offline-banner');
+    window.addEventListener('awms:offline', ()=>{ obanner.style.display = ''; });
+    window.addEventListener('awms:online', ()=>{ obanner.style.display = 'none'; });
+  </script>
+</body>
+</html>

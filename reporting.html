@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Reporting</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="container">
+    <div class="section-header">
+      <h1>Reporting</h1>
+      <a href="index.html" class="btn">Home</a>
+    </div>
+
+    <div id="offline-banner" style="display:none;background:#fff4e5;color:#7a4a00;padding:8px;border-radius:6px;border:1px solid rgba(122,74,0,0.06);text-align:center;margin:8px 0">You are offline — using local uploads and data.</div>
+
+    <div class="panel">
+      <h3>Generate Monthly Reports</h3>
+
+      <div class="form-row" style="margin-bottom:12px;align-items:center">
+        <label style="min-width:120px">Report scope</label>
+        <select id="report-scope">
+          <option value="tasks">Tasks</option>
+          <option value="performance">Performance</option>
+        </select>
+
+        <label style="min-width:140px;margin-left:12px">Month type</label>
+        <select id="month-type">
+          <option value="calendar">Calendar Month</option>
+          <option value="contractual">Contractual Month</option>
+        </select>
+      </div>
+
+      <div class="form-row" style="margin-bottom:12px;align-items:center">
+        <label style="min-width:120px">Start</label>
+        <input id="start-date" type="month">
+        <label style="min-width:120px;margin-left:12px">End</label>
+        <input id="end-date" type="month">
+        <button id="gen-report" class="btn" style="margin-left:12px">Generate</button>
+      </div>
+
+      <div id="report-result" style="margin-top:12px"></div>
+    </div>
+
+    <div class="panel" style="margin-top:18px">
+      <h3>Overview</h3>
+      <div id="report-overview" class="list"></div>
+    </div>
+  </main>
+
+  <script>
+    function getContractLabel(date, contractDay) {
+      const d = new Date(date);
+      const day = d.getDate();
+      let startMonth = d.getMonth();
+      let startYear = d.getFullYear();
+      if (day < contractDay) {
+        startMonth = startMonth - 1;
+        if (startMonth < 0) { startMonth = 11; startYear -= 1; }
+      }
+      const m = startMonth + 1;
+      return `${startYear}-${String(m).padStart(2,'0')} (start ${contractDay})`;
+    }
+
+    async function fetchOrEmpty(path) {
+      try {
+        const r = await fetch(path);
+        if (!r.ok) throw new Error('network');
+        return await r.json();
+      } catch (e) { return null; }
+    }
+
+    async function generateReport() {
+      const scope = document.getElementById('report-scope').value;
+      const monthType = document.getElementById('month-type').value;
+      const start = document.getElementById('start-date').value; // YYYY-MM
+      const end = document.getElementById('end-date').value;
+      const resultEl = document.getElementById('report-result');
+      resultEl.innerHTML = 'Generating...';
+
+      let employees = await fetchOrEmpty('/api/employees');
+      let tasks = await fetchOrEmpty('/api/tasks');
+      let perf = await fetchOrEmpty('/api/performance');
+
+      if (!employees || !tasks || !perf) {
+        resultEl.innerHTML = '<div class="item-meta">Server not available — using local uploaded files (best-effort)</div>';
+        const files = await window.awmsGetAllFiles();
+        const rows = [];
+        files.forEach(f => {
+          f.sheets.forEach(s => {
+            s.rows.forEach(r => rows.push({...r, _sourceFile: f.filename}));
+          });
+        });
+        if (scope === 'tasks') {
+          tasks = rows.filter(r => r.title || r.task || r.Task || r.due || r.assignee);
+        } else {
+          perf = rows.filter(r => r.metric || r.Metric || r.value || r.Value || r.employee || r.Employee || r.date);
+        }
+        employees = [];
+        rows.forEach(r => {
+          const n = r.employee || r.Employee || r.Assignee || r.assignee || r.Name || r.name;
+          if (n) employees.push({ name: n, contractDay: r.contractDay || null, _local: true });
+        });
+      }
+
+      tasks = tasks || [];
+      perf = perf || [];
+      employees = employees || [];
+
+      function parseDateFromItem(it) {
+        if (it.due) return new Date(it.due);
+        if (it.createdAt) return new Date(it.createdAt);
+        if (it.date) return new Date(it.date);
+        if (it.timestamp) return new Date(it.timestamp);
+        if (it.uploadedAt) return new Date(it.uploadedAt);
+        return it._createdAt ? new Date(it._createdAt) : null;
+      }
+
+      const counts = {};
+
+      const processItem = (it, employeeIdOrName) => {
+        const d = parseDateFromItem(it) || new Date();
+        if (!d) return;
+        if (monthType === 'calendar') {
+          const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+          counts[key] = (counts[key]||0) + 1;
+        } else {
+          let contractDay = 1;
+          if (employeeIdOrName) {
+            const e = employees.find(x => x._id === employeeIdOrName || x.name === employeeIdOrName || x._local && x.name === employeeIdOrName);
+            if (e && e.contractDay) contractDay = parseInt(e.contractDay,10) || 1;
+          }
+          const key = getContractLabel(d, contractDay);
+          counts[key] = (counts[key]||0) + 1;
+        }
+      };
+
+      if (scope === 'tasks') {
+        tasks.forEach(t => processItem(t, t.assignee || t.assigneeName || t.employee));
+      } else {
+        perf.forEach(p => processItem(p, p.employee));
+      }
+
+      const keys = Object.keys(counts).sort();
+      let filteredKeys = keys;
+      if (start) {
+        filteredKeys = filteredKeys.filter(k => (monthType==='calendar' ? k >= start : k >= start));
+      }
+      if (end) {
+        filteredKeys = filteredKeys.filter(k => (monthType==='calendar' ? k <= end : k <= end));
+      }
+
+      if (!filteredKeys.length) { resultEl.innerHTML = '<div class="item-meta">No data for the selected range.</div>'; return; }
+      let html = '<table><thead><tr><th>Period</th><th>Count</th></tr></thead><tbody>';
+      filteredKeys.forEach(k => { html += `<tr><td>${k}</td><td>${counts[k]}</td></tr>`; });
+      html += '</tbody></table>';
+      resultEl.innerHTML = html;
+
+      // update overview
+      loadOverview();
+    }
+
+    document.getElementById('gen-report').addEventListener('click', generateReport);
+
+    async function loadOverview(){
+      const [emps, tasks, perf] = await Promise.all([fetch('/api/employees').then(r=>r.json()).catch(()=>[]), fetch('/api/tasks').then(r=>r.json()).catch(()=>[]), fetch('/api/performance').then(r=>r.json()).catch(()=>[])]);
+      const el=document.getElementById('report-overview'); el.innerHTML='';
+      el.innerHTML = `<div class="list-item"><div><strong>Employees</strong><div class="item-meta">${emps.length} total</div></div></div>`+
+                     `<div class="list-item"><div><strong>Tasks</strong><div class="item-meta">${tasks.length} total</div></div></div>`+
+                     `<div class="list-item"><div><strong>Performance entries</strong><div class="item-meta">${perf.length} total</div></div></div>`;
+    }
+    loadOverview();
+
+    // offline banner handling
+    const obanner = document.getElementById('offline-banner');
+    window.addEventListener('awms:offline', ()=>{ obanner.style.display = ''; });
+    window.addEventListener('awms:online', ()=>{ obanner.style.display = 'none'; });
+  </script>
+</body>
+</html>

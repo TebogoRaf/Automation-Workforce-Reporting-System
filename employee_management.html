@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Employee Management</title>
+  <link rel="stylesheet" href="styles.css">
+ </head>
+<body>
+  <main class="container">
+    <div class="section-header">
+      <h1>Employee Management</h1>
+      <a href="index.html" class="btn">Home</a>
+    </div>
+
+    <div id="offline-banner" style="display:none;background:#fff4e5;color:#7a4a00;padding:8px;border-radius:6px;border:1px solid rgba(122,74,0,0.06);text-align:center;margin:8px 0">You are offline — using local data and queued sync.</div>
+
+    <div class="panel">
+      <form id="emp-form">
+        <div class="form-row">
+          <input id="emp-name" placeholder="Full name" required>
+          <input id="emp-role" placeholder="Role / Title" required>
+        </div>
+        <div class="form-row">
+          <input id="emp-contract-day" type="number" min="1" max="28" placeholder="Contract day (1-28)" title="Day of month contract period starts, e.g. 15" />
+          <button class="btn" type="submit">Add</button>
+        </div>
+      </form>
+
+      <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
+        <button id="sync-emps" class="btn">Sync local</button>
+        <span id="sync-status" class="item-meta"></span>
+      </div>
+
+      <div id="emp-list" class="list"></div>
+    </div>
+  </main>
+
+  <script src="db.js"></script>
+  <script>
+    async function load() {
+      const el = document.getElementById('emp-list');
+      el.innerHTML = '';
+      let list = null;
+      try {
+        const r = await fetch('/api/employees');
+        if (!r.ok) throw new Error('network');
+        list = await r.json();
+      } catch (e) {
+        // fallback to local
+        const local = await window.awmsDB.getEmployees();
+        list = local.map(i => ({ _localId: i.id, name: i.name, role: i.role, contractDay: i.contractDay }));
+      }
+
+      list.forEach(e => {
+        const div = document.createElement('div'); div.className='list-item';
+        const idAttr = e._id || '';
+        const delBtn = `<button data-id="${e._id || e._localId}" data-local="${e._localId? '1':''}" class="danger">Delete</button>`;
+        div.innerHTML = `<div><strong>${e.name}</strong><div class="item-meta">${e.role || ''} ${e.contractDay ? '• Contract day: ' + e.contractDay : ''}</div></div><div>${delBtn}</div>`;
+        el.appendChild(div);
+      });
+
+      el.querySelectorAll('button.danger').forEach(b=>b.addEventListener('click', async (ev)=>{
+        const id = ev.target.dataset.id; const isLocal = ev.target.dataset.local === '1';
+        if (isLocal) { await window.awmsDB.deleteEmployee(parseInt(id,10)); load(); return; }
+        try { await fetch('/api/employees/'+id,{method:'DELETE'}); load(); } catch (e) { alert('Delete failed (server unavailable)'); }
+      }));
+    }
+
+    document.getElementById('emp-form').addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const name = document.getElementById('emp-name').value.trim();
+      const role = document.getElementById('emp-role').value.trim();
+      const contractDay = parseInt(document.getElementById('emp-contract-day').value, 10) || null;
+      if(!name) return;
+      // try server, else store locally
+      let posted = false;
+      try {
+        const r = await fetch('/api/employees',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name,role,contractDay})});
+        if (r.ok) posted = true;
+      } catch (err) { posted = false; }
+      if (!posted) {
+        await window.awmsDB.addEmployee({ name, role, contractDay, _local: true, createdAt: Date.now() });
+        document.getElementById('sync-status').textContent = 'Saved locally — use Sync local when online.';
+      }
+      document.getElementById('emp-name').value=''; document.getElementById('emp-role').value=''; document.getElementById('emp-contract-day').value='';
+      load();
+    });
+
+    async function syncLocal(){
+      const statusEl = document.getElementById('sync-status'); statusEl.textContent = 'Syncing...';
+      const local = await window.awmsDB.getEmployees();
+      for (const item of local) {
+        try {
+          const r = await fetch('/api/employees',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:item.name,role:item.role,contractDay:item.contractDay})});
+          if (r.ok) await window.awmsDB.deleteEmployee(item.id);
+        } catch (e){ /* leave it local */ }
+      }
+      statusEl.textContent = 'Sync complete';
+      setTimeout(()=>statusEl.textContent='',2500);
+      load();
+    }
+
+    document.getElementById('sync-emps').addEventListener('click', syncLocal);
+
+    // auto-refresh on online
+    document.body.addEventListener('awms:online', ()=>{ document.getElementById('sync-status').textContent = ''; load(); });
+    document.body.addEventListener('awms:offline', ()=>{ document.getElementById('sync-status').textContent = 'Offline'; load(); });
+
+    load();
+
+    // offline banner handling
+    const obanner = document.getElementById('offline-banner');
+    window.addEventListener('awms:offline', ()=>{ obanner.style.display = ''; });
+    window.addEventListener('awms:online', ()=>{ obanner.style.display = 'none'; });
+  </script>
+</body>
+</html>

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Performance Tracking</title>
+  <link rel="stylesheet" href="styles.css">
+ </head>
+<body>
+  <main class="container">
+    <div class="section-header">
+      <h1>Performance Tracking</h1>
+      <a href="index.html" class="btn">Home</a>
+    </div>
+
+    <div id="offline-banner" style="display:none;background:#fff4e5;color:#7a4a00;padding:8px;border-radius:6px;border:1px solid rgba(122,74,0,0.06);text-align:center;margin:8px 0">You are offline — using local data and queued sync.</div>
+
+    <div class="panel">
+      <form id="perf-form">
+        <div class="form-row">
+          <select id="perf-employee"><option>Loading employees...</option></select>
+          <input id="perf-metric" placeholder="Metric (e.g. tasksCompleted)" required>
+        </div>
+        <div class="form-row">
+          <input id="perf-value" placeholder="Value" required>
+          <button class="btn" type="submit">Record</button>
+        </div>
+      </form>
+
+      <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
+        <button id="sync-perf" class="btn">Sync local</button>
+        <span id="sync-perf-status" class="item-meta"></span>
+      </div>
+
+      <div id="perf-list" class="list"></div>
+    </div>
+  </main>
+
+  <script src="db.js"></script>
+  <script>
+    async function loadEmployees(){ const sel=document.getElementById('perf-employee'); sel.innerHTML=''; let arr=[]; try{ const r=await fetch('/api/employees'); if(!r.ok) throw new Error('network'); arr=await r.json(); } catch(e){ arr=(await window.awmsDB.getEmployees()).map(x=>({ _localId:x.id, name:x.name })); } arr.forEach(e=>{ const o=document.createElement('option'); o.value=e._id||e._localId; o.textContent=e.name; sel.appendChild(o); }); }
+    async function loadPerf(){ let list=[]; try{ const r=await fetch('/api/performance'); if(!r.ok) throw new Error('network'); list=await r.json(); } catch(e){ list=(await window.awmsDB.getPerformance()).map(p=>({ _localId:p.id, metric:p.metric, value:p.value, employee:p.employee })); }
+      const el=document.getElementById('perf-list'); el.innerHTML=''; list.forEach(p=>{ const div=document.createElement('div'); div.className='list-item'; div.innerHTML=`<div><strong>${p.metric}</strong><div class="item-meta">Employee: ${p.employeeName||p.employee||''} • Value: ${p.value}</div></div>`; el.appendChild(div); }); }
+
+    document.getElementById('perf-form').addEventListener('submit', async e=>{ e.preventDefault(); const employee=document.getElementById('perf-employee').value; const metric=document.getElementById('perf-metric').value.trim(); const value=document.getElementById('perf-value').value.trim(); if(!metric||!value) return; let posted=false; try{ const r=await fetch('/api/performance',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({employee,metric,value})}); if(r.ok) posted=true; } catch(err){ posted=false; } if(!posted){ await window.awmsDB.addPerformance({ employee, metric, value, _local:true, createdAt:Date.now() }); document.getElementById('sync-perf-status').textContent='Saved locally'; } document.getElementById('perf-metric').value=''; document.getElementById('perf-value').value=''; loadPerf(); });
+
+    document.getElementById('sync-perf').addEventListener('click', async ()=>{ const status=document.getElementById('sync-perf-status'); status.textContent='Syncing...'; const local = await window.awmsDB.getPerformance(); for(const p of local){ try{ const r=await fetch('/api/performance',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({employee:p.employee,metric:p.metric,value:p.value})}); if(r.ok) await window.awmsDB.deletePerformance(p.id); } catch(e){} } status.textContent='Sync complete'; setTimeout(()=>status.textContent='',2000); loadPerf(); });
+    loadEmployees(); loadPerf();
+
+    // offline banner handling
+    const obanner = document.getElementById('offline-banner');
+    window.addEventListener('awms:offline', ()=>{ obanner.style.display = ''; });
+    window.addEventListener('awms:online', ()=>{ obanner.style.display = 'none'; });
+  </script>
+</body>
+</html>

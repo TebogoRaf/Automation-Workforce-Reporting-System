@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Automation Workforce Management System</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header class="site-header container">
+        <h1 id="main-heading">Automation Workforce Management System</h1>
+        <div id="greeting" class="greeting" aria-live="polite"></div>
+    </header>
+
+    <main class="container">
+        <p class="lead">This system helps manage and optimize your workforce through automation.</p>
+
+        <div class="controls">
+            <input id="search" type="search" placeholder="Filter pages (type to search)..." aria-label="Filter pages">
+        </div>
+
+        <ul id="nav-list" class="cards" role="list">
+            <li class="card"><a href="employee_management.html">Employee Management</a></li>
+            <li class="card"><a href="task_scheduling.html">Task Scheduling</a></li>
+            <li class="card"><a href="performance_tracking.html">Performance Tracking</a></li>
+            <li class="card"><a href="reporting.html">Reporting</a></li>
+        </ul>
+
+        <section class="progress-wrap">
+            <label for="start-btn">System quick-check</label>
+            <div class="progress" aria-hidden="false">
+                <div id="progress-bar" class="progress-bar" style="width:0%" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div>
+            </div>
+            <button id="start-btn" class="btn">Run Quick Check</button>
+            <div id="check-result" class="check-result" role="status" aria-live="polite"></div>
+        </section>
+
+        <section id="upload-section" class="upload-wrap">
+            <h2>Upload Excel File</h2>
+            <form id="upload-form">
+                <input id="excel-file" type="file" accept=".xls,.xlsx" aria-label="Upload Excel file" required>
+                <button id="upload-btn" class="btn" type="submit">Upload</button>
+            </form>
+            <div id="upload-status" class="upload-status" aria-live="polite"></div>
+            <div id="local-files" style="margin-top:12px"></div>
+        </section>
+
+        <section class="upload-wrap">
+            <h3>Offline / Sync Controls</h3>
+            <div style="display:flex;gap:8px;align-items:center">
+                <label><input id="server-upload-toggle" type="checkbox"> Upload to server when available</label>
+                <input id="server-endpoint" placeholder="Server endpoint (optional)" value="/upload" style="flex:1;padding:8px;border-radius:8px;border:1px solid #e6eef8">
+                <button id="export-all" class="btn">Export all (ZIP)</button>
+            </div>
+        </section>
+
+	</main>
+
+    <footer class="footer container">
+        <small>&copy; 2026 Automation Workforce Management System</small>
+    </footer>
+
+    <div id="offline-banner" style="display:none;background:#fff4e5;color:#7a4a00;padding:8px;border-radius:6px;border:1px solid rgba(122,74,0,0.06);text-align:center;margin:8px 18px">You are offline — the app will use local storage and queued sync.</div>
+
+    <script src="script.js"></script>
+    <!-- SheetJS (xlsx) for client-side Excel parsing (works offline via browser) -->
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+    <script src="db.js"></script>
+    <script>
+      // connectivity check and banner update
+      async function checkOnline(){
+        const banner = document.getElementById('offline-banner');
+        let online = navigator.onLine;
+        if (online) {
+          try { const r = await fetch('/health'); online = r.ok; } catch (e) { online = false; }
+        }
+        banner.style.display = online ? 'none' : '';
+        document.body.dispatchEvent(new CustomEvent(online? 'awms:online':'awms:offline'));
+      }
+      window.addEventListener('online', checkOnline);
+      window.addEventListener('offline', checkOnline);
+      setTimeout(checkOnline, 400);
+    </script>
+</body>
+</html>
